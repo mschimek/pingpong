@@ -40,13 +40,13 @@ void run_ping_pong(std::size_t num_elements, std::size_t num_iterations,
     auto send_recv = data;
     // MPI_Barrier(comm.comm);
     REORDERING_BARRIER
-    double time_start = MPI_Wtime();
+    double time_start = get_time();
     REORDERING_BARRIER
 
     run_ping_pong(send_recv, comm);
 
     REORDERING_BARRIER
-    double time_stop = MPI_Wtime();
+    double time_stop = get_time();
     REORDERING_BARRIER
     // MPI_Barrier(comm.comm);
     const double time_in_ns = (time_stop - time_start) * 1'000'000'000;
