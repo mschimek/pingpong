@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <vector>
 
 #include <mpi.h>
@@ -32,12 +33,14 @@ std::vector<char> gen_data(std::size_t num_elements) {
 /// outer loop for the ping pong benchmark. The actual call to MPI_Send/MPI_Recv
 /// is in another compilation unit to prevent reordering.
 void run_ping_pong(std::size_t num_elements, std::size_t num_iterations,
-                   MPICtx comm, const std::string& id) {
+                   MPICtx comm, std::vector<double>& duration_measurements,
+                   std::size_t offset) {
   const std::vector<char> data =
       comm.rank == 0 ? gen_data(num_elements) : std::vector<char>(num_elements);
-  std::vector<double> durations(num_iterations);
   for (std::size_t i = 0; i < num_iterations; ++i) {
     auto send_recv = data;
+    run_ping_pong(send_recv, comm);
+    volatile auto dummy_timer = get_time();
     // MPI_Barrier(comm.comm);
     REORDERING_BARRIER
     double time_start = get_time();
@@ -50,15 +53,9 @@ void run_ping_pong(std::size_t num_elements, std::size_t num_iterations,
     REORDERING_BARRIER
     // MPI_Barrier(comm.comm);
     const double time_in_ns = (time_stop - time_start) * 1'000'000'000;
-    durations[i] = time_in_ns;
+    duration_measurements[offset + i] = time_in_ns;
 
     // MPI_Barrier(comm.comm);
-  }
-  if (comm.rank == 0) {
-    for (std::size_t i = 0; i < num_iterations; ++i) {
-      std::cout << "RESULT iteration=" << i << " num_bytes=" << num_elements
-                << " time=" << durations[i] << " id=" << id << std::endl;
-    }
   }
 }
 
@@ -67,9 +64,31 @@ void run_ping_pong(const ExperimentConfig& config) {
   if (comm.rank == 0) {
     std::cout << "Resolution of WTime: " << MPI_Wtick() << std::endl;
   }
-  for (std::size_t i = config.num_bytes_start; i < config.num_bytes_stop;
+  const std::size_t num_executions =
+      (((config.num_bytes_stop - config.num_bytes_start) / config.step_size) +
+       1) *
+      config.num_iterations;
+  std::vector<double> duration_measurements(num_executions);
+  std::size_t offset = 0;
+  for (std::size_t i = config.num_bytes_start; i <= config.num_bytes_stop;
        i += config.step_size) {
-    run_ping_pong(i, config.num_iterations, comm, config.id);
+    run_ping_pong(i, config.num_iterations, comm, duration_measurements,
+                  offset);
+    offset += config.num_iterations;
+  }
+  offset = 0;
+  if (comm.rank == 0) {
+    std::stringstream sstream;
+    for (std::size_t num_bytes = config.num_bytes_start;
+         num_bytes <= config.num_bytes_stop; num_bytes += config.step_size) {
+      for (std::size_t i = 0; i < config.num_iterations; ++i) {
+        sstream << "RESULT iteration=" << i << " num_bytes=" << num_bytes
+                << " time=" << duration_measurements[offset + i]
+                << " id=" << config.id << "\n";
+      }
+      offset += config.num_iterations;
+    }
+    std::cout << sstream.str();
   }
 }
 
